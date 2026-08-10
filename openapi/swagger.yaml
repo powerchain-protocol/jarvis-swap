@@ -1,0 +1,445 @@
+openapi: 3.1.0
+info:
+  title: JARVIS Swap API
+  version: 1.0.0-rc.15
+  description: Server-side Sui network, wallet, price, pool and swap quote boundaries for JARVIS Swap.
+servers:
+  - url: /api/v1
+paths:
+
+  /deployment/status:
+    get:
+      summary: Deployment capability and readiness profile
+      description: Includes secret-free capacity settings and runtime upstream circuit-breaker states; never returns provider credentials or RPC secrets.
+      responses:
+        '200':
+          description: Application deployment profile is ready
+        '503':
+          description: Deployment profile has blocking configuration
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        '200': { description: Service health }
+  /ready:
+    get:
+      operationId: getReadiness
+      responses:
+        '200': { description: Runtime configuration and Sui network are ready }
+        '503': { description: Configuration or network dependency is not ready }
+  /network/status:
+    get:
+      operationId: getSuiNetworkStatus
+      responses:
+        '200': { description: Sui checkpoint, gas reference price and RPC latency }
+        '503': { description: Sui RPC unavailable }
+  /wallet/{address}:
+    get:
+      operationId: getWalletBalances
+      parameters:
+        - in: path
+          name: address
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Sui wallet balances }
+        '400': { description: Invalid address }
+
+  /wallet/{address}/activity:
+    get:
+      operationId: getWalletActivity
+      parameters:
+        - in: path
+          name: address
+          required: true
+          schema: { type: string }
+        - in: query
+          name: before
+          schema: { type: string }
+          description: Cursor for loading older transactions.
+        - in: query
+          name: after
+          schema: { type: string }
+          description: Cursor for polling newer transactions.
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 5, maximum: 100 }
+      responses:
+        '200': { description: Cursor-paginated normalized Sui transactions sent by the wallet }
+        '400': { description: Invalid address }
+  /pools/positions:
+    get:
+      operationId: getCetusPositions
+      parameters:
+        - in: query
+          name: owner
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Wallet-owned Cetus CLMM position objects when configured }
+        '400': { description: Invalid owner }
+  /pools/positions/{objectId}:
+    get:
+      operationId: getCetusPosition
+      parameters:
+        - in: path
+          name: objectId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: owner
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Normalized wallet-owned Cetus CLMM position }
+        '404': { description: Position not found for owner }
+  /pools/actions/validate:
+    post:
+      operationId: validateLiquidityAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, owner, poolObjectId]
+              properties:
+                kind: { type: string, enum: [open-position, add-liquidity, remove-liquidity, collect-fees, collect-rewards, close-position] }
+                owner: { type: string }
+                poolObjectId: { type: string }
+                positionObjectId: { type: string }
+                tickLower: { type: integer }
+                tickUpper: { type: integer }
+                amountABaseUnits: { type: string, pattern: '^\d+$' }
+                amountBBaseUnits: { type: string, pattern: '^\d+$' }
+                liquidity: { type: string, pattern: '^\d+$' }
+                slippageBps: { type: integer }
+      responses:
+        '200': { description: Intent validated; execution remains fail-closed }
+        '400': { description: Invalid or non-allowlisted liquidity intent }
+  /prices:
+    get:
+      operationId: getPrices
+      parameters:
+        - in: query
+          name: symbols
+          schema: { type: string, example: 'SUI,JARVIS,USDC,CCT' }
+      responses:
+        '200': { description: Aggregated server-side market prices }
+        '503': { description: No configured provider returned a price }
+  /rates:
+    get:
+      operationId: getMarketRate
+      parameters:
+        - in: query
+          name: base
+          schema: { type: string, example: SUI }
+        - in: query
+          name: quote
+          schema: { type: string, example: USDC }
+      responses:
+        '200': { description: Market conversion rate derived from validated price-provider observations }
+        '503': { description: Rate source unavailable }
+  /session/challenge:
+    post:
+      operationId: createWalletSessionChallenge
+      responses:
+        '200': { description: Short-lived address/network-bound personal-message challenge }
+        '429': { description: Rate limited }
+  /session/verify:
+    post:
+      operationId: verifyWalletSession
+      responses:
+        '200': { description: Personal-message signature verified and HTTP-only session created }
+        '401': { description: Invalid, expired, or mismatched wallet challenge/signature }
+  /session/current:
+    get:
+      operationId: getWalletSession
+      responses:
+        '200': { description: Current HTTP-only wallet-session state }
+  /session/logout:
+    post:
+      operationId: logoutWalletSession
+      responses:
+        '200': { description: Wallet session cleared }
+  /pools:
+    get:
+      operationId: getCetusPools
+      responses:
+        '200': { description: Configured Cetus pool object status }
+  /swap/config:
+    get:
+      operationId: getSwapRuntimeConfig
+      responses:
+        '200': { description: Public runtime network, token, fee and execution configuration }
+        '503': { description: Swap runtime configuration unavailable }
+  /swap/settings:
+    get:
+      operationId: getSwapSettings
+      responses:
+        '200': { description: Public execution limits and protection configuration }
+  /swap/readiness:
+    get:
+      operationId: getSwapReadiness
+      responses:
+        '200': { description: Swap execution is configured and ready }
+        '503': { description: Swap execution is blocked; response includes blockers and warnings }
+  /swap/quote:
+    post:
+      operationId: createSwapQuote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+      responses:
+        '200':
+          description: Signed Cetus Aggregator quote with exact base-unit protections
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+        '400': { description: Invalid request }
+        '422': { description: No acceptable route or protection limit exceeded }
+  /swap/validate:
+    post:
+      operationId: validateSwapProtection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slippageBps, priceImpactBps, expiresAt]
+              properties:
+                slippageBps: { type: integer }
+                priceImpactBps: { type: integer }
+                expiresAt: { type: integer, format: int64 }
+      responses:
+        '200': { description: Validation passed }
+        '422': { description: Protection validation failed }
+  /swap/verify:
+    post:
+      operationId: verifySwapQuote
+      responses:
+        '200': { description: Signed quote integrity verified }
+        '422': { description: Quote signature, expiry or validity window rejected }
+
+  /transactions/preflight:
+    post:
+      operationId: preflightTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transaction, sender]
+              properties:
+                transaction: { type: string, description: Base64 Sui transaction bytes }
+                sender: { type: string }
+                persistence:
+                  $ref: '#/components/schemas/SwapExecutionPersistence'
+                quoteProof:
+                  $ref: '#/components/schemas/SwapQuoteProof'
+      responses:
+        '200': { description: Exact signed transaction bytes simulate successfully and, for swaps, satisfy the signed quote, reviewed fee and minimum-output invariants }
+        '422': { description: Simulation failed }
+  /transactions/execute:
+    post:
+      operationId: executeSignedTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transaction, signature, sender]
+              properties:
+                transaction: { type: string, description: Base64 Sui transaction bytes }
+                signature: { type: string }
+                sender: { type: string }
+                persistence:
+                  $ref: '#/components/schemas/SwapExecutionPersistence'
+                quoteProof:
+                  $ref: '#/components/schemas/SwapQuoteProof'
+      responses:
+        '200': { description: Signed quote and signature verified, re-simulated and submitted }
+        '400': { description: Invalid transaction or signature }
+        '422': { description: Pre-submit simulation or transaction execution failed }
+  /transactions/{digest}:
+    get:
+      operationId: waitForSuiTransaction
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Sui transaction confirmed }
+        '422': { description: Transaction executed with failure }
+        '504': { description: Confirmation timed out or remains pending }
+  /database/status:
+    get:
+      summary: Database readiness status
+      responses:
+        '200':
+          description: Database configuration and reachability
+        '503':
+          description: Database configured but unavailable
+  /portfolio/{address}:
+    get:
+      summary: Value a Sui wallet portfolio
+      parameters:
+        - in: path
+          name: address
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Portfolio valuation }
+        '429': { description: Rate limited }
+  /tokens/resolve:
+    post:
+      operationId: resolveCustomToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [coinType]
+              properties:
+                coinType: { type: string, description: Exact Sui coin type }
+      responses:
+        '200': { description: Sui token metadata with trusted-list verification status }
+        '400': { description: Invalid coin type }
+        '429': { description: Rate limit exceeded }
+  /tokens/trusted:
+    get:
+      summary: List operator-trusted token coin types for the active Sui network
+      responses:
+        '200': { description: Trusted token registry }
+  /tokens/search:
+    get:
+      summary: Search discovered wallet tokens
+      responses:
+        '200': { description: Matching tokens }
+  /jobs/reconcile:
+    get:
+      summary: Reconcile pending persisted swaps against Sui finality
+      security: [{ cronBearer: [] }]
+      responses:
+        '200': { description: Reconciliation summary }
+        '401': { description: Invalid cron authorization }
+  /jobs/pools:
+    get:
+      summary: Snapshot configured Cetus pools for liquidity history
+      security: [{ cronBearer: [] }]
+      responses:
+        '200': { description: Pool snapshot summary }
+        '401': { description: Invalid cron authorization }
+  /jobs/cleanup:
+    get:
+      summary: Remove expired rate-limit and idempotency records
+      security: [{ cronBearer: [] }]
+      responses:
+        '200': { description: Cleanup summary }
+        '401': { description: Invalid cron authorization }
+components:
+  securitySchemes:
+    cronBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: CRON_SECRET
+  schemas:
+    QuoteRequest:
+      type: object
+      required: [amountIn, paySymbol, receiveSymbol, payDecimals, receiveDecimals, slippageBps, routing]
+      description: Client decimals are freshness hints only; the quote service re-resolves authoritative decimals from Sui metadata before financial calculations.
+      properties:
+        amountIn: { oneOf: [{ type: string }, { type: number }] }
+        paySymbol: { type: string }
+        receiveSymbol: { type: string }
+        payCoinType: { type: string }
+        receiveCoinType: { type: string }
+        payDecimals: { type: integer, minimum: 0, maximum: 18 }
+        receiveDecimals: { type: integer, minimum: 0, maximum: 18 }
+        slippageBps: { type: integer, minimum: 1 }
+        routing: { type: string, enum: [best-price, lowest-impact, custom] }
+    SwapExecutionPersistence:
+      type: object
+      required: [grossAmountInBaseUnits, minimumOutBaseUnits, serviceFeeBaseUnits, serviceFeeBps, payCoinType, receiveCoinType]
+      properties:
+        quoteId: { type: string, maxLength: 160 }
+        grossAmountInBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        minimumOutBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        serviceFeeBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        serviceFeeBps: { type: integer, minimum: 0, maximum: 250 }
+        payCoinType: { type: string }
+        receiveCoinType: { type: string }
+    SwapQuoteProof:
+      type: object
+      description: Required whenever SwapExecutionPersistence is supplied. The server verifies these claims and derives the authoritative swap execution intent from them.
+      required: [claims]
+      properties:
+        signature: { type: string, nullable: true, description: HMAC quote signature; required when signed-quote policy is enabled }
+        claims:
+          type: object
+          required: [id, network, issuedAt, expiresAt, payCoinType, receiveCoinType, payDecimals, receiveDecimals, grossAmountInBaseUnits, netSwapAmountBaseUnits, amountOutBaseUnits, minimumAmountOutBaseUnits, routeCommitment, policyFingerprint, serviceFeeBaseUnits, serviceFeeBps, slippageBps, maxPriceImpactBps, priceImpactBps, routing, deadlineMinutes]
+          properties:
+            id: { type: string, maxLength: 256 }
+            network: { type: string, enum: [mainnet, testnet, devnet] }
+            issuedAt: { type: integer, format: int64 }
+            expiresAt: { type: integer, format: int64 }
+            payCoinType: { type: string }
+            receiveCoinType: { type: string }
+            payDecimals: { type: integer, minimum: 0, maximum: 18, description: Server-resolved Sui coin decimals bound into the signed quote }
+            receiveDecimals: { type: integer, minimum: 0, maximum: 18, description: Server-resolved Sui coin decimals bound into the signed quote }
+            grossAmountInBaseUnits: { type: string, pattern: '^[0-9]+$' }
+            netSwapAmountBaseUnits: { type: string, pattern: '^[0-9]+$' }
+            amountOutBaseUnits: { type: string, pattern: '^[0-9]+$' }
+            minimumAmountOutBaseUnits: { type: string, pattern: '^[0-9]+$' }
+            routeCommitment: { type: string, pattern: '^[a-f0-9]{64}$' }
+            policyFingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: SHA-256 fingerprint of the server execution policy bound to this quote }
+            serviceFeeBaseUnits: { type: string, pattern: '^[0-9]+$' }
+            serviceFeeBps: { type: integer, minimum: 0, maximum: 250 }
+            serviceFeeRecipient: { type: string, nullable: true }
+            slippageBps: { type: integer, minimum: 1 }
+            maxPriceImpactBps: { type: integer, minimum: 10 }
+            priceImpactBps: { type: integer, minimum: 0 }
+            routing: { type: string, enum: [best-price, lowest-impact, custom] }
+            deadlineMinutes: { type: integer, minimum: 1, maximum: 60 }
+    QuoteResponse:
+      type: object
+      required: [id, network, issuedAt, expiresAt, payCoinType, receiveCoinType, payDecimals, receiveDecimals, grossAmountInBaseUnits, netSwapAmountBaseUnits, amountOutBaseUnits, minimumAmountOutBaseUnits, routeCommitment, policyFingerprint, serviceFeeBaseUnits, serviceFeeBps, slippageBps, maxPriceImpactBps, priceImpactBps, routing, deadlineMinutes, amountOutText, minimumReceivedText, serviceFeeAmountText, route, provider]
+      properties:
+        id: { type: string, maxLength: 256 }
+        network: { type: string, enum: [mainnet, testnet, devnet] }
+        issuedAt: { type: integer, format: int64 }
+        expiresAt: { type: integer, format: int64 }
+        payCoinType: { type: string }
+        receiveCoinType: { type: string }
+        grossAmountInBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        netSwapAmountBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        amountOutBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        minimumAmountOutBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        routeCommitment: { type: string, pattern: '^[a-f0-9]{64}$', description: SHA-256 commitment to the reviewed route provenance }
+        policyFingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: SHA-256 fingerprint of the execution policy required when this quote is verified or submitted }
+        serviceFeeBaseUnits: { type: string, pattern: '^[0-9]+$' }
+        serviceFeeBps: { type: integer, minimum: 0, maximum: 250 }
+        serviceFeeRecipient: { type: string, nullable: true }
+        slippageBps: { type: integer, minimum: 1 }
+        maxPriceImpactBps: { type: integer, minimum: 10 }
+        priceImpactBps: { type: integer, minimum: 0 }
+        routing: { type: string, enum: [best-price, lowest-impact, custom] }
+        deadlineMinutes: { type: integer, minimum: 1, maximum: 60 }
+        signature: { type: string, nullable: true }
+        signed: { type: boolean }
+        amountOutText: { type: string }
+        minimumReceivedText: { type: string }
+        serviceFeeAmountText: { type: string }
+        route:
+          type: array
+          items: { type: string }
+        provider: { type: string }

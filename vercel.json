@@ -1,0 +1,40 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/v1/transactions/preflight/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/v1/transactions/execute/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/v1/transactions/[digest]/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/v1/jobs/reconcile/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/v1/jobs/cleanup/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/v1/jobs/pools/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/v1/jobs/reconcile",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/v1/jobs/pools",
+      "schedule": "11 * * * *"
+    },
+    {
+      "path": "/api/v1/jobs/cleanup",
+      "schedule": "17 3 * * *"
+    }
+  ],
+  "buildCommand": "corepack pnpm run vercel-build",
+  "installCommand": "node scripts/install-deps.mjs"
+}

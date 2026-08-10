@@ -1,0 +1,291 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Network {
+  mainnet
+  testnet
+  devnet
+}
+
+enum SwapStatus {
+  quoted
+  signed
+  submitted
+  confirmed
+  failed
+  expired
+}
+
+enum PriceProvider {
+  pyth
+  birdeye
+  coinmarketcap
+  coingecko
+}
+
+model Wallet {
+  id          String   @id @default(uuid()) @db.Uuid
+  address     String   @unique @db.VarChar(66)
+  network     Network
+  label       String?  @db.VarChar(80)
+  firstSeenAt DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime @updatedAt @map("last_seen_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  swaps       SwapTransaction[]
+  positions   LiquidityPosition[]
+
+  @@index([network, lastSeenAt])
+  @@map("jarvis_swap_wallets")
+}
+
+model Token {
+  id          String   @id @default(uuid()) @db.Uuid
+  network     Network
+  coinType    String   @map("coin_type") @db.Text
+  symbol      String   @db.VarChar(32)
+  name        String   @db.VarChar(120)
+  decimals    Int
+  logoUrl     String?  @map("logo_url") @db.Text
+  verified    Boolean  @default(false)
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  prices      TokenPrice[]
+  paySwaps    SwapTransaction[] @relation("PayToken")
+  receiveSwaps SwapTransaction[] @relation("ReceiveToken")
+  poolA       LiquidityPool[] @relation("PoolTokenA")
+  poolB       LiquidityPool[] @relation("PoolTokenB")
+
+  @@unique([network, coinType])
+  @@index([network, symbol])
+  @@map("jarvis_swap_tokens")
+}
+
+model TokenPrice {
+  id            String        @id @default(uuid()) @db.Uuid
+  tokenId       String        @map("token_id") @db.Uuid
+  provider      PriceProvider
+  priceUsd      Decimal       @map("price_usd") @db.Decimal(38, 18)
+  confidenceBps Int?          @map("confidence_bps")
+  observedAt    DateTime      @map("observed_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  token         Token         @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([tokenId, observedAt(sort: Desc)])
+  @@index([provider, observedAt(sort: Desc)])
+  @@map("jarvis_swap_token_prices")
+}
+
+model SwapQuote {
+  id                         String   @id @db.VarChar(96)
+  network                    Network
+  walletAddress              String?  @map("wallet_address") @db.VarChar(66)
+  payCoinType                String   @map("pay_coin_type") @db.Text
+  receiveCoinType            String   @map("receive_coin_type") @db.Text
+  grossAmountInBaseUnits     Decimal  @map("gross_amount_in_base_units") @db.Decimal(78, 0)
+  netSwapAmountBaseUnits     Decimal  @map("net_swap_amount_base_units") @db.Decimal(78, 0)
+  minimumAmountOutBaseUnits  Decimal  @map("minimum_amount_out_base_units") @db.Decimal(78, 0)
+  serviceFeeBaseUnits        Decimal  @map("service_fee_base_units") @db.Decimal(78, 0)
+  serviceFeeBps              Int      @map("service_fee_bps")
+  serviceFeeRecipient        String?  @map("service_fee_recipient") @db.VarChar(66)
+  slippageBps                Int      @map("slippage_bps")
+  maxPriceImpactBps          Int      @map("max_price_impact_bps")
+  route                      Json?
+  signature                  String?  @db.Text
+  issuedAt                   DateTime @map("issued_at")
+  expiresAt                  DateTime @map("expires_at")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  transaction                SwapTransaction?
+
+  @@index([network, expiresAt])
+  @@index([walletAddress, createdAt(sort: Desc)])
+  @@map("jarvis_swap_quotes")
+}
+
+model SwapTransaction {
+  id                     String     @id @default(uuid()) @db.Uuid
+  digest                 String     @unique @db.VarChar(128)
+  quoteId                String?    @unique @map("quote_id") @db.VarChar(96)
+  walletId               String     @map("wallet_id") @db.Uuid
+  payTokenId             String?    @map("pay_token_id") @db.Uuid
+  receiveTokenId         String?    @map("receive_token_id") @db.Uuid
+  network                Network
+  status                 SwapStatus @default(submitted)
+  grossAmountInBaseUnits Decimal    @map("gross_amount_in_base_units") @db.Decimal(78, 0)
+  amountOutBaseUnits     Decimal?   @map("amount_out_base_units") @db.Decimal(78, 0)
+  minimumOutBaseUnits    Decimal    @map("minimum_out_base_units") @db.Decimal(78, 0)
+  serviceFeeBaseUnits    Decimal    @map("service_fee_base_units") @db.Decimal(78, 0)
+  serviceFeeBps          Int        @map("service_fee_bps")
+  gasUsedMist            Decimal?   @map("gas_used_mist") @db.Decimal(78, 0)
+  checkpoint             BigInt?
+  failureReason          String?    @map("failure_reason") @db.Text
+  submittedAt            DateTime   @default(now()) @map("submitted_at")
+  confirmedAt            DateTime?  @map("confirmed_at")
+  createdAt              DateTime   @default(now()) @map("created_at")
+  updatedAt              DateTime   @updatedAt @map("updated_at")
+  quote                   SwapQuote? @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  wallet                  Wallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  payToken                Token?      @relation("PayToken", fields: [payTokenId], references: [id], onDelete: SetNull)
+  receiveToken            Token?      @relation("ReceiveToken", fields: [receiveTokenId], references: [id], onDelete: SetNull)
+  feeCollection           ServiceFeeCollection?
+
+  @@index([walletId, submittedAt(sort: Desc)])
+  @@index([network, status, submittedAt(sort: Desc)])
+  @@map("jarvis_swap_transactions")
+}
+
+model ServiceFeeCollection {
+  id             String          @id @default(uuid()) @db.Uuid
+  transactionId  String          @unique @map("transaction_id") @db.Uuid
+  recipient      String          @db.VarChar(66)
+  coinType       String          @map("coin_type") @db.Text
+  amountBaseUnits Decimal        @map("amount_base_units") @db.Decimal(78, 0)
+  feeBps         Int             @map("fee_bps")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  transaction    SwapTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([recipient, createdAt(sort: Desc)])
+  @@map("jarvis_swap_service_fees")
+}
+
+model LiquidityPool {
+  id              String   @id @default(uuid()) @db.Uuid
+  network         Network
+  poolId          String   @map("pool_id") @db.VarChar(128)
+  protocol        String   @default("cetus") @db.VarChar(32)
+  tokenAId        String?  @map("token_a_id") @db.Uuid
+  tokenBId        String?  @map("token_b_id") @db.Uuid
+  feeRateBps      Int?     @map("fee_rate_bps")
+  tickSpacing     Int?     @map("tick_spacing")
+  currentSqrtPrice Decimal? @map("current_sqrt_price") @db.Decimal(78, 0)
+  liquidity       Decimal? @db.Decimal(78, 0)
+  raw             Json?
+  lastSyncedAt    DateTime @default(now()) @map("last_synced_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  tokenA          Token?   @relation("PoolTokenA", fields: [tokenAId], references: [id], onDelete: SetNull)
+  tokenB          Token?   @relation("PoolTokenB", fields: [tokenBId], references: [id], onDelete: SetNull)
+  positions       LiquidityPosition[]
+  snapshots       LiquidityPoolSnapshot[]
+
+  @@unique([network, poolId])
+  @@index([network, protocol])
+  @@map("jarvis_swap_liquidity_pools")
+}
+
+model LiquidityPosition {
+  id            String        @id @default(uuid()) @db.Uuid
+  network       Network
+  objectId      String        @map("object_id") @db.VarChar(128)
+  walletId      String        @map("wallet_id") @db.Uuid
+  poolId        String?       @map("pool_id") @db.Uuid
+  tickLower     Int?          @map("tick_lower")
+  tickUpper     Int?          @map("tick_upper")
+  liquidity     Decimal?      @db.Decimal(78, 0)
+  raw           Json?
+  lastSyncedAt  DateTime      @default(now()) @map("last_synced_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  wallet        Wallet        @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  pool          LiquidityPool? @relation(fields: [poolId], references: [id], onDelete: SetNull)
+  snapshots     LiquidityPositionSnapshot[]
+
+  @@unique([network, objectId])
+  @@index([walletId, lastSyncedAt(sort: Desc)])
+  @@map("jarvis_swap_liquidity_positions")
+}
+
+model LiquidityPoolSnapshot {
+  id                 String        @id @default(uuid()) @db.Uuid
+  liquidityPoolId    String        @map("liquidity_pool_id") @db.Uuid
+  currentTickIndex   Int?          @map("current_tick_index")
+  currentSqrtPrice   Decimal?      @map("current_sqrt_price") @db.Decimal(78, 0)
+  liquidity          Decimal?      @db.Decimal(78, 0)
+  tvlUsd             Decimal?      @map("tvl_usd") @db.Decimal(38, 18)
+  volume24hUsd       Decimal?      @map("volume_24h_usd") @db.Decimal(38, 18)
+  fees24hUsd         Decimal?      @map("fees_24h_usd") @db.Decimal(38, 18)
+  observedAt         DateTime      @default(now()) @map("observed_at")
+  pool               LiquidityPool @relation(fields: [liquidityPoolId], references: [id], onDelete: Cascade)
+
+  @@index([liquidityPoolId, observedAt(sort: Desc)])
+  @@map("jarvis_swap_liquidity_pool_snapshots")
+}
+
+model LiquidityPositionSnapshot {
+  id                       String            @id @default(uuid()) @db.Uuid
+  liquidityPositionId      String            @map("liquidity_position_id") @db.Uuid
+  rangeState               String            @map("range_state") @db.VarChar(20)
+  currentTickIndex         Int?              @map("current_tick_index")
+  liquidity                Decimal?          @db.Decimal(78, 0)
+  amountABaseUnits         Decimal?          @map("amount_a_base_units") @db.Decimal(78, 0)
+  amountBBaseUnits         Decimal?          @map("amount_b_base_units") @db.Decimal(78, 0)
+  feeOwedABaseUnits        Decimal?          @map("fee_owed_a_base_units") @db.Decimal(78, 0)
+  feeOwedBBaseUnits        Decimal?          @map("fee_owed_b_base_units") @db.Decimal(78, 0)
+  rewards                  Json?
+  valueUsd                 Decimal?          @map("value_usd") @db.Decimal(38, 18)
+  observedAt               DateTime          @default(now()) @map("observed_at")
+  position                 LiquidityPosition @relation(fields: [liquidityPositionId], references: [id], onDelete: Cascade)
+
+  @@index([liquidityPositionId, observedAt(sort: Desc)])
+  @@map("jarvis_swap_liquidity_position_snapshots")
+}
+
+model PortfolioSnapshot {
+  id String @id @default(uuid()) @db.Uuid
+  walletAddress String @map("wallet_address") @db.VarChar(66)
+  network Network
+  totalValueUsd Decimal @map("total_value_usd") @db.Decimal(38,18)
+  assetCount Int @map("asset_count")
+  pricedAssetCount Int @map("priced_asset_count")
+  observedAt DateTime @default(now()) @map("observed_at")
+  @@index([walletAddress, observedAt(sort: Desc)])
+  @@map("jarvis_swap_portfolio_snapshots")
+}
+
+model ApiRateLimit {
+  id String @id @default(uuid()) @db.Uuid
+  key String @db.VarChar(196)
+  bucketStart DateTime @map("bucket_start")
+  count Int @default(1)
+  expiresAt DateTime @map("expires_at")
+  @@unique([key, bucketStart], name: "key_bucketStart")
+  @@index([expiresAt])
+  @@map("jarvis_swap_api_rate_limits")
+}
+
+model ApiIdempotency {
+  key String @id @db.VarChar(128)
+  requestHash String @map("request_hash") @db.VarChar(64)
+  statusCode Int @map("status_code")
+  responseBody Json @map("response_body")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([expiresAt])
+  @@map("jarvis_swap_api_idempotency")
+}
+
+model ChainTransactionObservation {
+  id             String   @id @default(uuid()) @db.Uuid
+  digest         String   @unique @db.VarChar(128)
+  network        Network
+  status         String   @db.VarChar(16)
+  sender         String?  @db.VarChar(66)
+  checkpoint     BigInt?
+  gasUsedMist    Decimal? @map("gas_used_mist") @db.Decimal(78, 0)
+  balanceChanges Json?    @map("balance_changes")
+  events         Json?
+  observedAt     DateTime @default(now()) @map("observed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([network, observedAt(sort: Desc)])
+  @@index([sender, observedAt(sort: Desc)])
+  @@map("jarvis_swap_chain_transactions")
+}
